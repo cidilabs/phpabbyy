@@ -5,6 +5,7 @@ namespace CidiLabs\PhpAbbyy;
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Component\HttpFoundation\Response;
 use ZipArchive;
+use DOMDocument;
 
 class PhpAbbyy
 {
@@ -40,6 +41,7 @@ class PhpAbbyy
     ];
 
     private $outputDir;
+    private $path;
 
 
     public function __construct($outputDir = 'alternates')
@@ -100,13 +102,14 @@ class PhpAbbyy
 
         if ($response->getStatusCode() === Response::HTTP_OK) {
             $contentStr = $response->getContent(false);
-            $path = getcwd() . '/' . $this->outputDir;
-            if (!is_dir($path)) {
-                mkdir($path, 0755);
+            $this->path = getcwd() . '/' . $this->outputDir;
+            if (!is_dir($this->path)) {
+                mkdir($this->path, 0755);
             }
-            $archivePath = $path . '/' . $jobId . '.zip';
+            $archivePath = $this->path . '/' . $jobId . '.zip';
             file_put_contents($archivePath, $contentStr);
             $files = $this->unZipFile($archivePath);
+
 
             foreach ($files as $file) {
                 if (str_ends_with($file, $this->fileEndings[$outputExt])) {
@@ -118,6 +121,15 @@ class PhpAbbyy
                     $this->responseObject['data']['relatedFiles'][] = $file;
                 }
             }
+
+            if($this->fileEndings[$outputExt] == 'htm' && !empty($this->responseObject['data']['filePath'])){
+                $this->AttachPicturesToFileBase64($this->responseObject['data']['filePath']);
+            }
+
+            foreach ($this->responseObject['data']['relatedFiles'] as $file) {
+                unlink($file);
+            }
+            $this->responseObject['data']['relatedFiles'] = [];
 
             if (!empty($this->responseObject['data']['filePath'])) {
                 $this->deleteConvertedFileFromAbby($jobId);
@@ -137,6 +149,23 @@ class PhpAbbyy
         $response = $this->client->request('DELETE', "{$this->apiPath}/jobs/{$jobId}");
 
         return ($response->getStatusCode() === Response::HTTP_NO_CONTENT);
+    }
+
+    private function AttachPicturesToFileBase64($file)
+    {
+        $html = file_get_contents($file);
+
+        $dom = $this->getDomDocument($html);
+        foreach($dom->getElementsByTagName('body')[0]->getElementsByTagName('img') as $img) {
+            $imgFileLocation = $this->path . '/' . $img->getAttribute('src');
+
+            $imageBase64 = base64_encode(file_get_contents($imgFileLocation));
+
+            $img->setAttribute('src',"data:image/png;base64,{$imageBase64}");
+        }
+
+        file_put_contents($file,$dom->saveHTML());
+
     }
 
     private function unZipFile($fileUrl)
@@ -180,4 +209,13 @@ class PhpAbbyy
         }
         return $this->responseObject;
     }
+
+    private function getDomDocument($html)
+    {
+        $dom = new DOMDocument();
+        libxml_use_internal_errors(true);
+        $dom->loadHTML($html);
+        return $dom;
+    }
+
 }
